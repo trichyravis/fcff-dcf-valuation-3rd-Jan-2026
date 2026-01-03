@@ -67,14 +67,25 @@ if st.button("Load 10-K Data"):
         # ---------------------------------------------
         # TAB 1 — METADATA
         # ---------------------------------------------
-        with tabs[0]:
-            st.subheader("SEC Filing Metadata")
-            st.json({
-                "Ticker": ticker,
-                "CIK": cik,
-                "Source": "SEC EDGAR (XBRL)",
-                "Filing Type": "10-K"
-            })
+      with tabs[1]:
+        st.subheader("📄 Income Statement (10-K)")
+        income = build_income_statement(xbrl, extract_series)
+        for name, df in income.items():
+            st.markdown(f"**{name}**")
+            st.dataframe(df)
+
+        st.subheader("📄 Cash Flow Statement (10-K)")
+        cashflow = build_cashflow_statement(xbrl, extract_series)
+        for name, df in cashflow.items():
+            st.markdown(f"**{name}**")
+            st.dataframe(df)
+
+        st.subheader("📄 Balance Sheet (10-K)")
+        balance = build_balance_sheet(xbrl, extract_series)
+        for name, df in balance.items():
+            st.markdown(f"**{name}**")
+            st.dataframe(df)
+
 
         # ---------------------------------------------
         # TAB 2 — RAW FINANCIAL STATEMENTS
