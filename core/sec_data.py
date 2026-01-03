@@ -26,11 +26,27 @@ def extract_series(xbrl, tags, col):
 
     for tag in tags:
         try:
-            df = pd.DataFrame(xbrl["facts"]["us-gaap"][tag]["units"].values())
-            df = df[df["form"] == "10-K"].sort_values("end")
+            units = xbrl["facts"]["us-gaap"][tag]["units"]
+
+            # Prefer USD
+            if "USD" in units:
+                data = units["USD"]
+            else:
+                # fallback: first available unit
+                data = list(units.values())[0]
+
+            df = pd.DataFrame(data)
+
+            if df.empty:
+                continue
+
+            df = df[df["form"] == "10-K"].copy()
             df["Year"] = pd.to_datetime(df["end"]).dt.year
+
             return df[["Year", "val"]].rename(columns={"val": col})
-        except:
+
+        except Exception:
             continue
 
     return pd.DataFrame(columns=["Year", col])
+
