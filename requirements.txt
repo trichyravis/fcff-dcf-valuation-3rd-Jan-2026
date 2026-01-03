@@ -1,6 +1,6 @@
 
 streamlit==1.52.2
-yfinance==0.2.32
 pandas==2.3.3
 numpy==2.4.0
 requests==2.32.5
+sec-edgar-downloader==5.0.0
