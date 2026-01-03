@@ -213,8 +213,11 @@ main_header = f"""
 st.markdown(main_header, unsafe_allow_html=True)
 
 # Route to selected page
+# Route to selected page
+import importlib
+
 if page == "🏠 Dashboard":
-    dashboard_page = importlib.import_module('streamlit_app.pages.01_dashboard')
+    dashboard_page = importlib.import_module('streamlit_app.pages.dashboard')
     dashboard_page.render()
 
 elif page == "📥 Data Ingestion":
@@ -230,11 +233,11 @@ elif page == "📊 DCF Analysis":
     dcf_page.render()
 
 elif page == "🔍 Sensitivity Analysis":
-    sensitivity_page = importlib.import_module('streamlit_app.pages.05_sensitivity')
+    sensitivity_page = importlib.import_module('streamlit_app.pages.sensitivity')
     sensitivity_page.render()
 
 elif page == "⚙️ Settings":
-    settings_page = importlib.import_module('streamlit_app.pages.06_settings')
+    settings_page = importlib.import_module('streamlit_app.pages.settings')
     settings_page.render()
 
 # ===== PROFESSIONAL FOOTER =====
