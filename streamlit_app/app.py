@@ -96,8 +96,7 @@ with st.sidebar:
         "⚙️ Settings": "pages/06_settings.py"
     }
     
-    page = st.radio("", options=list(pages.keys()), label_visibility="collapsed")
-    
+    page = st.radio("Select Page", options=list(pages.keys()), label_visibility="collapsed")
     st.divider()
     
     # About section
