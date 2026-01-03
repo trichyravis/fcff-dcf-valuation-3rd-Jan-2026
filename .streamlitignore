@@ -1,1 +1,28 @@
+# Ignore database files
+*.db
+*.sqlite
+*.sqlite3
 
+# Ignore cache
+__pycache__
+.pytest_cache
+.streamlit
+
+# Ignore venv
+venv/
+
+# Ignore git
+.git
+.gitignore
+
+# Ignore IDE
+.vscode
+.idea
+
+# Ignore OS files
+.DS_Store
+Thumbs.db
+
+# Ignore test files
+tests/
+test_*.py
