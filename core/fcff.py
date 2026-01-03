@@ -1,25 +1,29 @@
 
 def compute_fcff(xbrl, extract):
-    tags = {
-        "EBIT": "OperatingIncomeLoss",
-        "PBT": "IncomeBeforeTax",
-        "Tax": "IncomeTaxExpenseBenefit",
-        "Dep": "DepreciationAndAmortization",
-        "CapEx": "PaymentsToAcquirePropertyPlantAndEquipment",
-        "ΔWC": "IncreaseDecreaseInOperatingAssets"
+
+    tag_map = {
+        "EBIT": ["OperatingIncomeLoss"],
+        "PBT": [
+            "IncomeBeforeTax",
+            "IncomeLossFromContinuingOperationsBeforeIncomeTaxes"
+        ],
+        "Tax": ["IncomeTaxExpenseBenefit"],
+        "Dep": ["DepreciationAndAmortization"],
+        "CapEx": ["PaymentsToAcquirePropertyPlantAndEquipment"],
+        "ΔWC": ["IncreaseDecreaseInOperatingAssets"]
     }
 
-    dfs = []
+    dfs = {}
 
-    for col, tag in tags.items():
-        df = extract(xbrl, tag, col)
+    for col, tags in tag_map.items():
+        df = extract(xbrl, tags, col)
         if df.empty:
-            return None, f"Missing XBRL tag: {tag}"
-        dfs.append(df)
+            return None, f"Missing XBRL tag(s): {', '.join(tags)}"
+        dfs[col] = df
 
-    df_final = dfs[0]
-    for d in dfs[1:]:
-        df_final = df_final.merge(d, on="Year", how="inner")
+    df_final = dfs["EBIT"]
+    for key in ["PBT", "Tax", "Dep", "CapEx", "ΔWC"]:
+        df_final = df_final.merge(dfs[key], on="Year", how="inner")
 
     if df_final.empty:
         return None, "No overlapping 10-K years across statements"
