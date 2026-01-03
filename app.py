@@ -10,8 +10,18 @@ from core.sensitivity import *
 st.set_page_config(page_title="FCFF–DCF Valuation", layout="wide")
 st.title("📊 FCFF–DCF Valuation Platform (10-K Based)")
 
+# ✅ USER GUIDANCE (ADD THIS BLOCK)
+st.info(
+    "ℹ️ **Important Note**: Some companies (banks, insurers, NBFCs, "
+    "and recent IPOs) do not report Working Capital consistently in SEC XBRL. "
+    "For such firms, **FCFF cannot be reliably computed**, and the model "
+    "will gracefully stop with an explanation."
+)
+
+# USER INPUT
 ticker = st.text_input("Enter US Ticker", "AAPL")
 
+# ACTION
 if st.button("Run Valuation"):
 
     try:
@@ -28,14 +38,17 @@ if st.button("Run Valuation"):
             st.warning("⚠️ FCFF data unavailable for this company.")
             st.stop()
 
+        # DISPLAY FCFF
         st.subheader("📘 FCFF (Last 5 Years)")
         st.dataframe(fcff_df)
 
         fcff_last = fcff_df["FCFF"].iloc[-1]
 
+        # WACC
         wacc_data = calculate_wacc(ticker)
         st.metric("WACC", f"{wacc_data['WACC']:.2%}")
 
+        # MONTE CARLO
         mc_values = monte_carlo_dcf(
             fcff_last=fcff_last,
             wacc_mean=wacc_data["WACC"],
