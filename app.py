@@ -1,110 +1,73 @@
 
 import streamlit as st
 
-from core.sec_data import get_cik_from_ticker, get_company_xbrl, extract_series
+from core.sec_data import *
+from core.statements import *
+from core.validate import validate_for_fcff
 from core.fcff import compute_fcff
 from core.wacc import calculate_wacc
-from core.monte_carlo import monte_carlo_dcf
 from core.equity import get_share_count
 from core.net_debt import get_net_debt
+from core.dcf import equity_value_from_fcff
+from core.monte_carlo import monte_carlo_dcf
 
-# -------------------------------------------------
-# PAGE CONFIG
-# -------------------------------------------------
-st.set_page_config(
-    page_title="FCFF–DCF Valuation Platform",
-    layout="wide"
-)
+st.set_page_config(page_title="10-K Valuation Platform", layout="wide")
+st.title("📊 10-K Based Valuation Platform")
 
-st.title("📊 FCFF–DCF Valuation Platform (10-K Based)")
+ticker = st.text_input("US Ticker", "AAPL")
 
-# -------------------------------------------------
-# USER GUIDANCE
-# -------------------------------------------------
-st.info(
-    "ℹ️ **Important**: SEC 10-K filings typically allow computation of "
-    "**only one clean FCFF year**. DCF valuation is forward-looking and "
-    "relies on assumptions, not historical FCFF time series. "
-    "Banks, insurers, and some NBFCs are not suitable for FCFF valuation."
-)
+if st.button("Load 10-K Data"):
 
-# -------------------------------------------------
-# USER INPUT
-# -------------------------------------------------
-ticker = st.text_input("Enter US Ticker", "AAPL")
+    cik = get_cik_from_ticker(ticker)
+    xbrl = get_company_xbrl(cik)
 
-# -------------------------------------------------
-# MAIN ACTION
-# -------------------------------------------------
-if st.button("Run Valuation"):
+    tabs = st.tabs([
+        "📥 Downloaded Data",
+        "📄 Financial Statements",
+        "🧠 Validation",
+        "📘 FCFF",
+        "📈 Valuation"
+    ])
 
-    try:
-        # ---------------------------------------------
-        # FETCH SEC DATA
-        # ---------------------------------------------
-        cik = get_cik_from_ticker(ticker)
-        xbrl = get_company_xbrl(cik)
+    with tabs[0]:
+        st.json({"Ticker": ticker, "CIK": cik})
 
-        # ---------------------------------------------
-        # FCFF COMPUTATION
-        # ---------------------------------------------
-        fcff_df, error = compute_fcff(xbrl, extract_series)
+    with tabs[1]:
+        st.subheader("Income Statement")
+        st.write(build_income_statement(xbrl, extract_series))
 
-        if error:
-            st.error(f"❌ FCFF computation failed: {error}")
-            st.stop()
+        st.subheader("Cash Flow Statement")
+        st.write(build_cashflow_statement(xbrl, extract_series))
 
-        st.subheader("📘 FCFF (Latest 10-K Year)")
-        st.dataframe(fcff_df)
+        st.subheader("Balance Sheet")
+        st.write(build_balance_sheet(xbrl, extract_series))
 
-        if len(fcff_df) == 1:
-            st.warning(
-                "⚠️ FCFF computed using only the latest 10-K year. "
-                "This is normal and academically correct. "
-                "DCF valuation is forward-looking."
-            )
+    with tabs[2]:
+        ok, assumptions, warnings = validate_for_fcff(xbrl, extract_series)
+        st.write("FCFF Feasible:", ok)
+        st.write("Assumptions:", assumptions)
+        st.write("Warnings:", warnings)
 
-        # ---------------------------------------------
-        # EQUITY & CAPITAL STRUCTURE
-        # ---------------------------------------------
+    with tabs[3]:
+        fcff_df, err = compute_fcff(xbrl, extract_series)
+        if err:
+            st.error(err)
+        else:
+            st.dataframe(fcff_df)
+
+    with tabs[4]:
+        fcff = fcff_df["FCFF"].iloc[0]
+        wacc = calculate_wacc(ticker)["WACC"]
         shares = get_share_count(xbrl)
         net_debt = get_net_debt(xbrl, extract_series)
 
-        col1, col2 = st.columns(2)
-
-        col1.metric(
-            "Diluted Shares Outstanding",
-            f"{shares:,}"
+        ev, eq, price = equity_value_from_fcff(
+            fcff, wacc, 0.04, net_debt, shares
         )
 
-        col2.metric(
-            "Net Debt (Debt – Cash)",
-            f"${net_debt:,.0f}"
-        )
+        st.metric("Enterprise Value", f"${ev:,.0f}")
+        st.metric("Equity Value", f"${eq:,.0f}")
+        st.metric("Fair Value per Share", f"${price:,.2f}")
 
-        # ---------------------------------------------
-        # WACC (CAPM-BASED)
-        # ---------------------------------------------
-        wacc_data = calculate_wacc(ticker)
-
-        st.metric(
-            "WACC (CAPM-Based)",
-            f"{wacc_data['WACC']:.2%}"
-        )
-
-        # ---------------------------------------------
-        # MONTE CARLO DCF (TERMINAL VALUE DISTRIBUTION)
-        # ---------------------------------------------
-        fcff_last = fcff_df["FCFF"].iloc[-1]
-
-        mc_values = monte_carlo_dcf(
-            fcff_last=fcff_last,
-            wacc_mean=wacc_data["WACC"],
-            g_mean=0.04
-        )
-
-        st.subheader("📈 Monte Carlo DCF – Terminal Value Distribution")
-        st.line_chart(mc_values[:500])
-
-    except Exception as e:
-        st.exception(e)
+        mc = monte_carlo_dcf(fcff, wacc, 0.04)
+        st.line_chart(mc[:300])
