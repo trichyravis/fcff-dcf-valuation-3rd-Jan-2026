@@ -1,3 +1,4 @@
+
 """
 DCF Valuation Platform - Main Application
 The Mountain Path - World of Finance
@@ -213,27 +214,27 @@ st.markdown(main_header, unsafe_allow_html=True)
 
 # Route to selected page
 if page == "🏠 Dashboard":
-    import pages.dashboard as dashboard_page
+    from streamlit_app.pages import dashboard as dashboard_page
     dashboard_page.render()
 
 elif page == "📥 Data Ingestion":
-    import pages.data_ingestion as ingestion_page
+    from streamlit_app.pages import data_ingestion as ingestion_page
     ingestion_page.render()
 
 elif page == "✓ Data Validation":
-    import pages.validation as validation_page
+    from streamlit_app.pages import validation as validation_page
     validation_page.render()
 
 elif page == "📊 DCF Analysis":
-    import pages.dcf_analysis as dcf_page
+    from streamlit_app.pages import dcf_analysis as dcf_page
     dcf_page.render()
 
 elif page == "🔍 Sensitivity Analysis":
-    import pages.sensitivity as sensitivity_page
+    from streamlit_app.pages import sensitivity as sensitivity_page
     sensitivity_page.render()
 
 elif page == "⚙️ Settings":
-    import pages.settings as settings_page
+    from streamlit_app.pages import settings as settings_page
     settings_page.render()
 
 # ===== PROFESSIONAL FOOTER =====
