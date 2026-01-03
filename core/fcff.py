@@ -123,8 +123,12 @@ def compute_fcff(xbrl, extract):
     # Keep last 5 economically usable years
     df_final = df_final.tail(5)
 
-    if df_final.empty:
-        return None, "Insufficient overlapping data to compute FCFF"
+    # Minimum data sufficiency check (PROFESSIONAL RULE)
+    if len(df_final) < 2:
+        return None, (
+            "Insufficient overlapping data to compute FCFF "
+            "(less than 2 usable years)"
+        )
 
     # -------------------------------------------------
     # FCFF COMPUTATION
