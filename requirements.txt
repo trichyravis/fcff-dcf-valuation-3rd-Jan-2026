@@ -1,6 +1,6 @@
 
-# ULTRA-MINIMAL - Just Streamlit
-# The Mountain Path - World of Finance
-# Try this if FLEXIBLE fails
-
-streamlit
+streamlit==1.52.2
+yfinance==0.2.32
+pandas==2.3.3
+numpy==2.4.0
+requests==2.32.5
