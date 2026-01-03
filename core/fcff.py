@@ -1,93 +1,90 @@
 
-import streamlit as st
+import pandas as pd
+from functools import reduce
 
-from core.sec_data import get_cik_from_ticker, get_company_xbrl, extract_series
-from core.fcff import compute_fcff
-from core.wacc import calculate_wacc
-from core.monte_carlo import monte_carlo_dcf
-from core.equity import get_share_count
-from core.net_debt import get_net_debt
+def compute_fcff(xbrl, extract):
+    """
+    Compute FCFF from a single SEC 10-K.
+    Accepts ONE usable FCFF year (correct finance logic).
+    Returns: (df, error_message or None)
+    """
 
-# -------------------------------------------------
-# PAGE CONFIG
-# -------------------------------------------------
-st.set_page_config(
-    page_title="FCFF–DCF Valuation Platform",
-    layout="wide"
-)
+    tag_map = {
+        "EBIT": ["OperatingIncomeLoss"],
+        "PBT": [
+            "IncomeBeforeTax",
+            "IncomeLossFromContinuingOperationsBeforeIncomeTaxes"
+        ],
+        "NetIncome": ["NetIncomeLoss", "ProfitLoss"],
+        "Tax": ["IncomeTaxExpenseBenefit"],
+        "Dep": ["DepreciationAndAmortization"],
+        "CapEx": ["PaymentsToAcquirePropertyPlantAndEquipment"],
+        "ΔWC": ["IncreaseDecreaseInOperatingAssets"]
+    }
 
-st.title("📊 FCFF–DCF Valuation Platform (10-K Based)")
+    dfs = {}
 
-# -------------------------------------------------
-# USER GUIDANCE
-# -------------------------------------------------
-st.info(
-    "ℹ️ **Important**: SEC 10-K filings provide only ONE clean FCFF year. "
-    "DCF valuation is forward-looking and relies on assumptions. "
-    "Banks and insurers are not suitable for FCFF valuation."
-)
+    # Extract available series
+    for col, tags in tag_map.items():
+        df = extract(xbrl, tags, col)
+        if not df.empty:
+            dfs[col] = df
 
-# -------------------------------------------------
-# USER INPUT
-# -------------------------------------------------
-ticker = st.text_input("Enter US Ticker", "AAPL")
+    # Reconstruct PBT if missing
+    if "PBT" not in dfs:
+        if "NetIncome" in dfs and "Tax" in dfs:
+            pbt = dfs["NetIncome"].merge(dfs["Tax"], on="Year", how="outer")
+            pbt["PBT"] = pbt["NetIncome"] + pbt["Tax"]
+            dfs["PBT"] = pbt[["Year", "PBT"]]
+        else:
+            return None, "Pre-tax income unavailable (cannot reconstruct)"
 
-# -------------------------------------------------
-# MAIN ACTION
-# -------------------------------------------------
-if st.button("Run Valuation"):
+    # Required inputs
+    for r in ["EBIT", "PBT", "Tax", "Dep", "CapEx"]:
+        if r not in dfs:
+            return None, f"Missing XBRL tag required for FCFF: {r}"
 
-    try:
-        cik = get_cik_from_ticker(ticker)
-        xbrl = get_company_xbrl(cik)
+    # ΔWC fallback
+    if "ΔWC" not in dfs:
+        years = dfs["EBIT"]["Year"]
+        dfs["ΔWC"] = pd.DataFrame({
+            "Year": years,
+            "ΔWC": [0] * len(years)
+        })
 
-        # -----------------------------
-        # FCFF
-        # -----------------------------
-        fcff_df, error = compute_fcff(xbrl, extract_series)
+    # Align data
+    df_list = [
+        dfs["EBIT"],
+        dfs["PBT"],
+        dfs["Tax"],
+        dfs["Dep"],
+        dfs["CapEx"],
+        dfs["ΔWC"]
+    ]
 
-        if error:
-            st.error(f"❌ FCFF computation failed: {error}")
-            st.stop()
+    df_final = reduce(
+        lambda l, r: l.merge(r, on="Year", how="outer"),
+        df_list
+    ).sort_values("Year")
 
-        st.subheader("📘 FCFF (Latest 10-K Year)")
-        st.dataframe(fcff_df)
+    df_final = df_final.dropna(
+        subset=["EBIT", "PBT", "Tax", "Dep", "CapEx"]
+    )
 
-        st.warning(
-            "⚠️ FCFF is based on the latest 10-K year only. "
-            "This is correct and standard in professional valuation."
-        )
+    # Keep latest year only (10-K reality)
+    df_final = df_final.tail(1)
 
-        # -----------------------------
-        # EQUITY & CAPITAL STRUCTURE
-        # -----------------------------
-        shares = get_share_count(xbrl)
-        net_debt = get_net_debt(xbrl, extract_series)
+    if df_final.empty:
+        return None, "Unable to compute FCFF from 10-K data"
 
-        col1, col2 = st.columns(2)
+    # FCFF calculation
+    df_final["TaxRate"] = (df_final["Tax"] / df_final["PBT"]).clip(0, 0.35)
 
-        col1.metric("Diluted Shares Outstanding", f"{shares:,}")
-        col2.metric("Net Debt (Debt – Cash)", f"${net_debt:,.0f}")
+    df_final["FCFF"] = (
+        df_final["EBIT"] * (1 - df_final["TaxRate"])
+        + df_final["Dep"]
+        - df_final["CapEx"]
+        - df_final["ΔWC"]
+    )
 
-        # -----------------------------
-        # WACC
-        # -----------------------------
-        wacc_data = calculate_wacc(ticker)
-        st.metric("WACC (CAPM-Based)", f"{wacc_data['WACC']:.2%}")
-
-        # -----------------------------
-        # MONTE CARLO
-        # -----------------------------
-        fcff_last = fcff_df["FCFF"].iloc[0]
-
-        mc_values = monte_carlo_dcf(
-            fcff_last=fcff_last,
-            wacc_mean=wacc_data["WACC"],
-            g_mean=0.04
-        )
-
-        st.subheader("📈 Monte Carlo DCF – Terminal Value Distribution")
-        st.line_chart(mc_values[:500])
-
-    except Exception as e:
-        st.exception(e)
+    return df_final.reset_index(drop=True), None
