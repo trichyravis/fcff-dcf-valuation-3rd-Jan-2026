@@ -15,11 +15,17 @@ def get_company_xbrl(cik):
     url = f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
     return requests.get(url, headers=HEADERS).json()
 
-def extract_series(xbrl, tag, col):
-    try:
-        df = pd.DataFrame(xbrl["facts"]["us-gaap"][tag]["units"]["USD"])
-        df = df[df["form"] == "10-K"].sort_values("end").tail(5)
-        df["Year"] = pd.to_datetime(df["end"]).dt.year
-        return df[["Year", "val"]].rename(columns={"val": col})
-    except:
-        return pd.DataFrame(columns=["Year", col])
+def extract_series(xbrl, tags, col):
+    """
+    tags: list of acceptable XBRL tags (ordered by preference)
+    """
+    for tag in tags:
+        try:
+            df = pd.DataFrame(xbrl["facts"]["us-gaap"][tag]["units"]["USD"])
+            df = df[df["form"] == "10-K"].sort_values("end").tail(5)
+            df["Year"] = pd.to_datetime(df["end"]).dt.year
+            return df[["Year", "val"]].rename(columns={"val": col})
+        except:
+            continue
+
+    return pd.DataFrame(columns=["Year", col])
