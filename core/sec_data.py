@@ -29,3 +29,47 @@ def extract_series(xbrl, tags, col):
             continue
 
     return pd.DataFrame(columns=["Year", col])
+def extract_working_capital_change(xbrl):
+    try:
+        # Current Assets (excluding cash)
+        ca = extract_series(
+            xbrl,
+            ["AssetsCurrent"],
+            "CA"
+        )
+
+        # Cash & equivalents
+        cash = extract_series(
+            xbrl,
+            ["CashAndCashEquivalentsAtCarryingValue"],
+            "Cash"
+        )
+
+        # Current Liabilities
+        cl = extract_series(
+            xbrl,
+            ["LiabilitiesCurrent"],
+            "CL"
+        )
+
+        if ca.empty or cl.empty:
+            return pd.DataFrame()
+
+        df = ca.merge(cl, on="Year", how="inner")
+
+        if not cash.empty:
+            df = df.merge(cash, on="Year", how="left")
+            df["Cash"] = df["Cash"].fillna(0)
+        else:
+            df["Cash"] = 0
+
+        # Net Working Capital (operating)
+        df["NWC"] = (df["CA"] - df["Cash"]) - df["CL"]
+
+        # ΔWC
+        df["ΔWC"] = df["NWC"].diff()
+
+        return df[["Year", "ΔWC"]].dropna()
+
+    except:
+        return pd.DataFrame()
