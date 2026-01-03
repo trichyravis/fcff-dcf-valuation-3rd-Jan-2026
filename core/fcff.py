@@ -45,13 +45,51 @@ def compute_fcff(xbrl, extract):
             )
 
     # -------------------------------
-    # REQUIRED FOR FCFF
+    # REQUIRED FOR FCFF (ΔWC REMOVED HERE)
     # -------------------------------
-    required = ["EBIT", "PBT", "Tax", "Dep", "CapEx", "ΔWC"]
+    required = ["EBIT", "PBT", "Tax", "Dep", "CapEx"]
 
     for r in required:
         if r not in dfs:
             return None, f"Missing XBRL tag(s) required for FCFF: {r}"
+
+    # -------------------------------
+    # ΔWC FALLBACK LOGIC (⬅️ THIS IS THE KEY ADDITION)
+    # -------------------------------
+    if "ΔWC" not in dfs:
+        try:
+            # Compute ΔWC from Balance Sheet
+            ca = extract(xbrl, ["AssetsCurrent"], "CA")
+            cl = extract(xbrl, ["LiabilitiesCurrent"], "CL")
+            cash = extract(
+                xbrl,
+                ["CashAndCashEquivalentsAtCarryingValue"],
+                "Cash"
+            )
+
+            if not ca.empty and not cl.empty:
+                wc = ca.merge(cl, on="Year", how="inner")
+
+                if not cash.empty:
+                    wc = wc.merge(cash, on="Year", how="left")
+                    wc["Cash"] = wc["Cash"].fillna(0)
+                else:
+                    wc["Cash"] = 0
+
+                wc["NWC"] = (wc["CA"] - wc["Cash"]) - wc["CL"]
+                wc["ΔWC"] = wc["NWC"].diff()
+
+                dfs["ΔWC"] = wc[["Year", "ΔWC"]].dropna()
+            else:
+                raise Exception("Balance sheet WC unavailable")
+
+        except:
+            # Final conservative fallback
+            years = dfs["EBIT"]["Year"]
+            dfs["ΔWC"] = pd.DataFrame({
+                "Year": years,
+                "ΔWC": [0] * len(years)
+            })
 
     # -------------------------------
     # MERGE ALL
