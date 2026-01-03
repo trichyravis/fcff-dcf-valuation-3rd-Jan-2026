@@ -2,6 +2,7 @@
 import streamlit as st
 
 def render():
-    st.title("🏠 Dashboard")
-    st.write("Dashboard Overview")
-    st.info("Database Summary will display here")
+    try:
+        st.write("Page Content Here")
+    except Exception as e:
+        st.error(f"Error: {e}")
