@@ -3,7 +3,7 @@
 SEC 10-K Downloader and Parser
 Fetch and extract key financial data from SEC EDGAR 10-K filings
 """
-
+import json
 try:
     from sec_edgar_downloader import Downloader
     DOWNLOADER_AVAILABLE = True
