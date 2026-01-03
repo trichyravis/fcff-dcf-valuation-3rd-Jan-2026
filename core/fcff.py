@@ -1,15 +1,35 @@
+
 def compute_fcff(xbrl, extract):
-    ebit = extract(xbrl, "OperatingIncomeLoss", "EBIT")
-    pbt  = extract(xbrl, "IncomeBeforeTax", "PBT")
-    tax  = extract(xbrl, "IncomeTaxExpenseBenefit", "Tax")
-    dep  = extract(xbrl, "DepreciationAndAmortization", "Dep")
-    cap  = extract(xbrl, "PaymentsToAcquirePropertyPlantAndEquipment", "CapEx")
-    wc   = extract(xbrl, "IncreaseDecreaseInOperatingAssets", "ΔWC")
+    tags = {
+        "EBIT": "OperatingIncomeLoss",
+        "PBT": "IncomeBeforeTax",
+        "Tax": "IncomeTaxExpenseBenefit",
+        "Dep": "DepreciationAndAmortization",
+        "CapEx": "PaymentsToAcquirePropertyPlantAndEquipment",
+        "ΔWC": "IncreaseDecreaseInOperatingAssets"
+    }
 
-    df = ebit.merge(pbt, on="Year").merge(tax, on="Year")
-    df = df.merge(dep, on="Year").merge(cap, on="Year").merge(wc, on="Year")
+    dfs = []
 
-    df["TaxRate"] = df["Tax"] / df["PBT"]
-    df["FCFF"] = df["EBIT"]*(1-df["TaxRate"]) + df["Dep"] - df["CapEx"] - df["ΔWC"]
-    return df
+    for col, tag in tags.items():
+        df = extract(xbrl, tag, col)
+        if df.empty:
+            return None, f"Missing XBRL tag: {tag}"
+        dfs.append(df)
 
+    df_final = dfs[0]
+    for d in dfs[1:]:
+        df_final = df_final.merge(d, on="Year", how="inner")
+
+    if df_final.empty:
+        return None, "No overlapping 10-K years across statements"
+
+    df_final["TaxRate"] = df_final["Tax"] / df_final["PBT"]
+    df_final["FCFF"] = (
+        df_final["EBIT"] * (1 - df_final["TaxRate"])
+        + df_final["Dep"]
+        - df_final["CapEx"]
+        - df_final["ΔWC"]
+    )
+
+    return df_final.sort_values("Year").reset_index(drop=True), None
