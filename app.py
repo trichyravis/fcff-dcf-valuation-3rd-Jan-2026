@@ -51,7 +51,7 @@ with st.sidebar:
         "⚙️ Settings"
     ]
     
-    page = st.radio("", options=pages, label_visibility="collapsed")
+    page = st.radio("Navigation", options=pages, label_visibility="collapsed")
     
     st.divider()
     
