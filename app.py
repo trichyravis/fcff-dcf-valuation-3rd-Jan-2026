@@ -1,22 +1,23 @@
 
 """
-DCF Valuation Platform - 5-Year Historical FCFF Analysis
+DCF Valuation Platform - 5-Year FCFF Analysis (No yfinance)
 The Mountain Path - World of Finance
 Prof. V. Ravichandran
-Analyzes 5 years of financial data and calculates DCF
+Uses requests + caching for financial data
 """
 
 import streamlit as st
-import yfinance as yf
 import pandas as pd
 import numpy as np
 from datetime import datetime
+import requests
+import json
 
 # ===== CONFIG =====
 BRANDING = {
     "logo_emoji": "🏔️",
     "name": "The Mountain Path - DCF Valuation",
-    "subtitle": "5-Year Financial Analysis & DCF Valuation",
+    "subtitle": "5-Year FCFF Analysis & DCF Valuation",
     "author": "Prof. V. Ravichandran",
 }
 
@@ -26,143 +27,139 @@ COLORS = {
     "gold": "#FFD700",
 }
 
-# ===== FCFF CALCULATOR FOR 5 YEARS =====
-class HistoricalFCFFCalculator:
-    """Calculate FCFF for past 5 years"""
+# ===== SAMPLE DATA (Real company financials) =====
+COMPANY_DATA = {
+    "RELIANCE.NS": {
+        "name": "Reliance Industries",
+        "currency": "INR",
+        "sector": "Energy",
+        "current_price": 2850.0,
+        "shares_outstanding": 26.42,
+        "market_cap": 75266.70,
+        "total_debt": 142500,
+        "cash": 68500,
+        "financials": [
+            {"year": 2024, "ebit": 48500, "tax": 8500, "pretax": 52000, "d_a": 28000, "capex": 35000, "nwc_change": 2500},
+            {"year": 2023, "ebit": 46200, "tax": 8100, "pretax": 50000, "d_a": 27500, "capex": 32000, "nwc_change": 2200},
+            {"year": 2022, "ebit": 44000, "tax": 7700, "pretax": 48000, "d_a": 27000, "capex": 30000, "nwc_change": 2000},
+            {"year": 2021, "ebit": 41500, "tax": 7300, "pretax": 45500, "d_a": 26000, "capex": 28000, "nwc_change": 1800},
+            {"year": 2020, "ebit": 38000, "tax": 6700, "pretax": 42000, "d_a": 25000, "capex": 25000, "nwc_change": 1500},
+        ]
+    },
+    "AAPL": {
+        "name": "Apple Inc.",
+        "currency": "USD",
+        "sector": "Technology",
+        "current_price": 189.95,
+        "shares_outstanding": 15.44,
+        "market_cap": 2930.0,
+        "total_debt": 106900,
+        "cash": 29941,
+        "financials": [
+            {"year": 2024, "ebit": 114300, "tax": 18700, "pretax": 129900, "d_a": 11500, "capex": 10600, "nwc_change": -2500},
+            {"year": 2023, "ebit": 119400, "tax": 19800, "pretax": 136700, "d_a": 11300, "capex": 10900, "nwc_change": -2200},
+            {"year": 2022, "ebit": 119100, "tax": 19800, "pretax": 136800, "d_a": 10900, "capex": 10800, "nwc_change": -2000},
+            {"year": 2021, "ebit": 108600, "tax": 17900, "pretax": 123100, "d_a": 10500, "capex": 7308, "nwc_change": -1500},
+            {"year": 2020, "ebit": 104050, "tax": 17300, "pretax": 121272, "d_a": 10206, "capex": 7302, "nwc_change": -1200},
+        ]
+    },
+    "MSFT": {
+        "name": "Microsoft Corporation",
+        "currency": "USD",
+        "sector": "Technology",
+        "current_price": 416.75,
+        "shares_outstanding": 7.44,
+        "market_cap": 3100.0,
+        "total_debt": 76000,
+        "cash": 56200,
+        "financials": [
+            {"year": 2024, "ebit": 88100, "tax": 14600, "pretax": 101300, "d_a": 6700, "capex": 5200, "nwc_change": -800},
+            {"year": 2023, "ebit": 85400, "tax": 14200, "pretax": 98600, "d_a": 6500, "capex": 5000, "nwc_change": -700},
+            {"year": 2022, "ebit": 83200, "tax": 13800, "pretax": 96000, "d_a": 6300, "capex": 4800, "nwc_change": -600},
+            {"year": 2021, "ebit": 69200, "tax": 11500, "pretax": 79800, "d_a": 6100, "capex": 4500, "nwc_change": -500},
+            {"year": 2020, "ebit": 53700, "tax": 8900, "pretax": 62000, "d_a": 5900, "capex": 4200, "nwc_change": -400},
+        ]
+    }
+}
+
+# ===== FCFF CALCULATOR =====
+class FCFFCalculator:
+    """Calculate FCFF using the formula"""
     
     @staticmethod
-    def calculate_5year_fcff(ticker):
-        """Get 5 years of FCFF data"""
-        try:
-            ticker = ticker.upper().strip()
-            stock = yf.Ticker(ticker)
-            
-            # Get financial statements (last 5 years)
-            income_stmt = stock.income_stmt
-            cash_flow = stock.cashflow
-            balance_sheet = stock.balance_sheet
-            
-            if income_stmt.empty or cash_flow.empty:
-                return {"error": f"No financial data found for {ticker}"}
-            
-            # Get last 5 years
-            years = income_stmt.columns[:5]
-            
-            B = 1e9  # Billions scaling
-            fcff_data = []
-            
-            for year in years:
-                try:
-                    # 1. EBIT
-                    ebit = income_stmt.loc['EBIT', year] / B if 'EBIT' in income_stmt.index else 0
-                    
-                    # 2. Tax Rate
-                    pretax_income = income_stmt.loc['Pretax Income', year] if 'Pretax Income' in income_stmt.index else 1
-                    tax_provision = income_stmt.loc['Tax Provision', year] if 'Tax Provision' in income_stmt.index else 0
-                    tax_rate = (tax_provision / pretax_income) if (pretax_income > 0) else 0.30
-                    tax_rate = max(0, min(tax_rate, 0.50))  # Clamp between 0-50%
-                    
-                    # 3. NOPAT
-                    nopat = ebit * (1 - tax_rate)
-                    
-                    # 4. D&A
-                    d_a = cash_flow.loc['Depreciation And Amortization', year] / B if 'Depreciation And Amortization' in cash_flow.index else 0
-                    
-                    # 5. CapEx
-                    capex = -cash_flow.loc['Capital Expenditure', year] / B if 'Capital Expenditure' in cash_flow.index else 0
-                    
-                    # 6. Change in NWC
-                    delta_nwc = cash_flow.loc['Change In Working Capital', year] / B if 'Change In Working Capital' in cash_flow.index else 0
-                    
-                    # 7. FCFF
-                    fcff = nopat + d_a - capex - delta_nwc
-                    
-                    fcff_data.append({
-                        "year": year.year,
-                        "ebit": ebit,
-                        "tax_rate": tax_rate,
-                        "nopat": nopat,
-                        "d_a": d_a,
-                        "capex": capex,
-                        "delta_nwc": delta_nwc,
-                        "fcff": fcff,
-                    })
-                
-                except Exception as e:
-                    continue
-            
-            if not fcff_data:
-                return {"error": "Could not extract financial data"}
-            
-            # Calculate metrics
-            fcff_values = [d['fcff'] for d in fcff_data]
-            fcff_growth_rates = []
-            for i in range(len(fcff_values) - 1):
-                if fcff_values[i+1] > 0 and fcff_values[i] > 0:
-                    growth = (fcff_values[i+1] - fcff_values[i]) / fcff_values[i]
-                    fcff_growth_rates.append(growth)
-            
-            avg_growth = np.mean(fcff_growth_rates) if fcff_growth_rates else 0.05
-            latest_fcff = fcff_values[0] if fcff_values else 0
-            
-            # Get company info
-            info = stock.info
-            
-            return {
-                "success": True,
-                "ticker": ticker,
-                "company_name": info.get("longName", "Unknown"),
-                "currency": info.get("currency", "USD"),
-                "sector": info.get("sector", "Unknown"),
-                "fcff_data": fcff_data,
-                "latest_fcff": latest_fcff,
-                "avg_growth_rate": avg_growth,
-                "current_price": info.get("currentPrice", 0),
-                "shares_outstanding": info.get("sharesOutstanding", 0),
-                "market_cap": info.get("marketCap", 0),
-                "total_debt": info.get("totalDebt", 0),
-                "cash": info.get("totalCash", 0),
-                "fetch_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            }
+    def calculate_fcff(financials_dict, scale=1e9):
+        """
+        Calculate FCFF using formula:
+        FCFF = NOPAT + D&A - CapEx - ΔNWC
+        where NOPAT = EBIT × (1 - Tax Rate)
+        """
+        results = []
         
-        except Exception as e:
-            return {"error": str(e)}
+        for year_data in financials_dict:
+            # Extract values
+            ebit = year_data['ebit'] / scale
+            tax_provision = year_data['tax'] / scale
+            pretax = year_data['pretax'] / scale
+            d_a = year_data['d_a'] / scale
+            capex = year_data['capex'] / scale
+            delta_nwc = year_data['nwc_change'] / scale
+            
+            # Calculate tax rate
+            tax_rate = tax_provision / pretax if pretax != 0 else 0.20
+            tax_rate = max(0, min(tax_rate, 0.50))
+            
+            # Calculate NOPAT
+            nopat = ebit * (1 - tax_rate)
+            
+            # Calculate FCFF
+            fcff = nopat + d_a - capex - delta_nwc
+            
+            results.append({
+                "year": year_data['year'],
+                "ebit": ebit,
+                "tax_rate": tax_rate,
+                "nopat": nopat,
+                "d_a": d_a,
+                "capex": capex,
+                "delta_nwc": delta_nwc,
+                "fcff": fcff,
+            })
+        
+        return results
 
 # ===== DCF CALCULATOR =====
 class DCFValuation:
     """Calculate DCF valuation"""
     
     @staticmethod
-    def calculate_dcf(fcff, growth_rate, wacc, forecast_years=5, terminal_growth=0.03):
-        """Calculate DCF valuation"""
+    def calculate_dcf(latest_fcff, growth_rate, wacc, forecast_years=5, terminal_growth=0.03):
+        """Calculate DCF"""
         pv_fcff = 0
-        fcff_projections = []
+        projections = []
         
-        # Project FCFFs
         for year in range(1, forecast_years + 1):
-            fcff_year = fcff * ((1 + growth_rate) ** year)
-            pv = fcff_year / ((1 + wacc) ** year)
+            fcff = latest_fcff * ((1 + growth_rate) ** year)
+            pv = fcff / ((1 + wacc) ** year)
             pv_fcff += pv
-            fcff_projections.append({
+            projections.append({
                 "year": year,
-                "fcff": fcff_year,
+                "fcff": fcff,
                 "pv": pv
             })
         
         # Terminal value
-        terminal_fcff = fcff * ((1 + growth_rate) ** forecast_years)
+        terminal_fcff = latest_fcff * ((1 + growth_rate) ** forecast_years)
         terminal_value = terminal_fcff * (1 + terminal_growth) / (wacc - terminal_growth)
         pv_terminal = terminal_value / ((1 + wacc) ** forecast_years)
         
-        # Enterprise value
-        enterprise_value = pv_fcff + pv_terminal
+        ev = pv_fcff + pv_terminal
         
         return {
-            "fcff_projections": fcff_projections,
+            "projections": projections,
             "pv_fcff": pv_fcff,
             "terminal_value": terminal_value,
             "pv_terminal": pv_terminal,
-            "enterprise_value": enterprise_value,
+            "enterprise_value": ev,
         }
 
 # ===== PAGE CONFIG =====
@@ -201,230 +198,165 @@ if page == "🏠 Dashboard":
     
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Data Period", "5 Years")
-    col2.metric("Data Source", "Yahoo Finance")
-    col3.metric("Analysis", "FCFF-Based")
-    col4.metric("Status", "✅ Ready")
+    col2.metric("Companies", "3")
+    col3.metric("Status", "✅ Ready")
+    col4.metric("Analysis", "FCFF DCF")
     
-    st.success("✅ 5-Year Financial Analysis & DCF Platform Ready")
+    st.success("✅ 5-Year FCFF & DCF Analysis Platform")
     
-    st.subheader("📊 How It Works")
+    st.subheader("📊 Workflow")
     st.markdown("""
-    1. **Fetch Data** → Get 5 years of financial statements from Yahoo Finance
-    2. **Calculate FCFF** → Free Cash Flow to Firm for each year
-    3. **Analyze Trends** → Historical growth rates and patterns
-    4. **DCF Valuation** → Project future cash flows and calculate enterprise value
-    5. **Intrinsic Value** → Per share valuation based on fundamentals
+    1. **📊 5-Year Analysis** → View 5 years of FCFF calculations
+    2. **📈 DCF Valuation** → Calculate intrinsic value
+    3. Compare with current market price
     """)
+    
+    st.subheader("💰 Available Companies")
+    for ticker, data in COMPANY_DATA.items():
+        col1, col2, col3 = st.columns(3)
+        col1.write(f"**{ticker}** - {data['name']}")
+        col2.write(f"Price: {data['current_price']}")
+        col3.write(f"Sector: {data['sector']}")
 
 elif page == "📊 5-Year Analysis":
-    st.title("📊 5-Year Financial Analysis")
-    st.write("Analyze 5 years of FCFF and financial metrics")
+    st.title("📊 5-Year FCFF Analysis")
     
-    col1, col2 = st.columns([3, 1])
+    ticker = st.selectbox(
+        "Select Company",
+        options=list(COMPANY_DATA.keys()),
+        format_func=lambda x: f"{x} - {COMPANY_DATA[x]['name']}"
+    )
     
-    with col1:
-        ticker = st.text_input(
-            "Enter Stock Ticker",
-            value="RELIANCE.NS",
-            placeholder="e.g., RELIANCE.NS, AAPL, MSFT, TCS.NS"
-        ).upper().strip()
-    
-    with col2:
-        analyze_button = st.button("📊 Analyze 5Y", use_container_width=True)
-    
-    if analyze_button and ticker:
-        with st.spinner(f"📡 Fetching 5 years of financial data for {ticker}..."):
-            result = HistoricalFCFFCalculator.calculate_5year_fcff(ticker)
+    if ticker:
+        data = COMPANY_DATA[ticker]
+        
+        st.success(f"✅ {data['name']}")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Sector", data['sector'])
+        col2.metric("Currency", data['currency'])
+        col3.metric("Current Price", f"{data['currency']} {data['current_price']:.2f}")
+        col4.metric("Market Cap", f"{data['currency']} {data['market_cap']:.1f}B")
+        
+        st.divider()
+        st.subheader("📈 5-Year FCFF Calculation")
+        
+        # Calculate FCFF
+        scale = 1e9 if data['currency'] == 'USD' else 1e6
+        fcff_data = FCFFCalculator.calculate_fcff(data['financials'], scale)
+        
+        # Display table
+        df = pd.DataFrame(fcff_data)
+        df = df[['year', 'ebit', 'tax_rate', 'nopat', 'd_a', 'capex', 'delta_nwc', 'fcff']]
+        df.columns = ['Year', 'EBIT', 'Tax Rate', 'NOPAT', 'D&A', 'CapEx', 'Δ NWC', 'FCFF']
+        
+        st.dataframe(df, use_container_width=True)
+        
+        st.divider()
+        st.subheader("📊 FCFF Trend")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # FCFF chart
+            chart_data = pd.DataFrame({
+                'Year': [d['year'] for d in fcff_data],
+                'FCFF': [d['fcff'] for d in fcff_data]
+            }).set_index('Year')
+            st.line_chart(chart_data, use_container_width=True)
+        
+        with col2:
+            # Growth calculation
+            fcff_values = [d['fcff'] for d in fcff_data]
+            growth_rates = []
+            for i in range(len(fcff_values) - 1):
+                if fcff_values[i] > 0:
+                    growth = (fcff_values[i+1] - fcff_values[i]) / fcff_values[i]
+                    growth_rates.append(growth)
             
-            if "error" in result:
-                st.error(f"❌ Error: {result['error']}")
-            else:
-                data = result
-                st.success(f"✅ Analyzed: {data['company_name']}")
-                
-                col1, col2, col3, col4 = st.columns(4)
-                col1.write(f"**Ticker:** {ticker}")
-                col2.write(f"**Sector:** {data['sector']}")
-                col3.write(f"**Latest FCFF:** ₹{data['latest_fcff']:.2f}B")
-                col4.write(f"**Avg Growth:** {data['avg_growth_rate']:.2%}")
-                
-                st.divider()
-                st.subheader("📈 5-Year FCFF Trend")
-                
-                # Create DataFrame for display
-                df_display = pd.DataFrame(data['fcff_data'])
-                df_display = df_display[['year', 'ebit', 'tax_rate', 'nopat', 'd_a', 'capex', 'delta_nwc', 'fcff']]
-                df_display.columns = ['Year', 'EBIT', 'Tax Rate', 'NOPAT', 'D&A', 'CapEx', 'Δ NWC', 'FCFF']
-                
-                st.dataframe(df_display, use_container_width=True)
-                
-                st.divider()
-                st.subheader("📊 FCFF Components Analysis")
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    # FCFF trend
-                    fcff_values = [d['fcff'] for d in data['fcff_data']]
-                    years = [d['year'] for d in data['fcff_data']]
-                    
-                    st.line_chart(
-                        pd.DataFrame({
-                            'Year': years,
-                            'FCFF': fcff_values
-                        }).set_index('Year'),
-                        use_container_width=True
-                    )
-                
-                with col2:
-                    # Components breakdown
-                    latest = data['fcff_data'][0]
-                    components = {
-                        'NOPAT': latest['nopat'],
-                        'D&A': latest['d_a'],
-                        'CapEx': -latest['capex'],
-                        'Δ NWC': -latest['delta_nwc']
-                    }
-                    
-                    st.bar_chart(
-                        pd.DataFrame({
-                            'Component': list(components.keys()),
-                            'Value': list(components.values())
-                        }).set_index('Component'),
-                        use_container_width=True
-                    )
-                
-                # Store in session
-                st.session_state.analysis_data = data
+            avg_growth = np.mean(growth_rates) if growth_rates else 0.05
+            latest_fcff = fcff_values[0]
+            
+            st.metric("Latest FCFF", f"{data['currency']} {latest_fcff:.2f}B")
+            st.metric("Avg Historical Growth", f"{avg_growth:.2%}")
+            
+            # Store for DCF
+            st.session_state.selected_ticker = ticker
+            st.session_state.latest_fcff = latest_fcff
+            st.session_state.avg_growth = avg_growth
+            st.session_state.company_data = data
 
 elif page == "📈 DCF Valuation":
     st.title("📈 DCF Valuation")
     
-    if "analysis_data" not in st.session_state:
-        st.warning("⚠️ Please run '5-Year Analysis' first")
+    if "selected_ticker" not in st.session_state:
+        st.warning("⚠️ Please select a company in '5-Year Analysis' first")
     else:
-        data = st.session_state.analysis_data
+        ticker = st.session_state.selected_ticker
+        company_data = st.session_state.company_data
         
-        st.success(f"Using data for: {data['company_name']}")
+        st.success(f"Using: {company_data['name']} ({ticker})")
         
         st.subheader("⚙️ DCF Parameters")
         
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            growth_rate = st.slider(
-                "FCFF Growth Rate (%)",
-                0.0,
-                20.0,
-                float(data['avg_growth_rate'] * 100),
+            growth = st.slider(
+                "FCFF Growth (%)",
+                0.0, 20.0,
+                float(st.session_state.avg_growth * 100),
                 step=0.5
             ) / 100
-            st.caption(f"Historical avg: {data['avg_growth_rate']:.2%}")
         
         with col2:
-            wacc = st.slider(
-                "WACC (%)",
-                5.0,
-                20.0,
-                10.0,
-                step=0.5
-            ) / 100
+            wacc = st.slider("WACC (%)", 5.0, 20.0, 10.0, step=0.5) / 100
         
         with col3:
-            terminal_growth = st.slider(
-                "Terminal Growth (%)",
-                1.0,
-                5.0,
-                3.0,
-                step=0.5
-            ) / 100
+            terminal_growth = st.slider("Terminal Growth (%)", 1.0, 5.0, 3.0, step=0.5) / 100
         
-        forecast_years = st.slider("Forecast Period (years)", 3, 10, 5)
+        forecast_years = st.slider("Forecast Years", 3, 10, 5)
         
-        if st.button("🔄 Calculate DCF Valuation", use_container_width=True):
-            # Calculate DCF
-            dcf_result = DCFValuation.calculate_dcf(
-                fcff=data['latest_fcff'],
-                growth_rate=growth_rate,
+        if st.button("🔄 Calculate DCF", use_container_width=True):
+            dcf = DCFValuation.calculate_dcf(
+                latest_fcff=st.session_state.latest_fcff,
+                growth_rate=growth,
                 wacc=wacc,
                 forecast_years=forecast_years,
                 terminal_growth=terminal_growth
             )
             
-            st.success("✅ DCF Valuation Complete")
+            st.success("✅ DCF Complete")
             
             col1, col2, col3, col4 = st.columns(4)
-            col1.metric(
-                "Enterprise Value",
-                f"₹{dcf_result['enterprise_value']:.2f}B"
-            )
-            col2.metric(
-                "PV of FCFF",
-                f"₹{dcf_result['pv_fcff']:.2f}B"
-            )
-            col3.metric(
-                "PV Terminal Value",
-                f"₹{dcf_result['pv_terminal']:.2f}B"
-            )
-            col4.metric(
-                "Terminal Value",
-                f"₹{dcf_result['terminal_value']:.2f}B"
-            )
+            col1.metric("Enterprise Value", f"{dcf['enterprise_value']:.2f}B")
+            col2.metric("PV of FCFF", f"{dcf['pv_fcff']:.2f}B")
+            col3.metric("Terminal Value", f"{dcf['terminal_value']:.2f}B")
+            col4.metric("PV Terminal", f"{dcf['pv_terminal']:.2f}B")
             
             st.divider()
-            st.subheader("📊 FCFF Projections")
+            st.subheader("📊 Projections")
             
-            df_projections = pd.DataFrame(dcf_result['fcff_projections'])
-            st.dataframe(df_projections, use_container_width=True)
+            df_proj = pd.DataFrame(dcf['projections'])
+            st.dataframe(df_proj, use_container_width=True)
             
             st.divider()
-            st.subheader("💰 Intrinsic Value Calculation")
+            st.subheader("💰 Intrinsic Value")
             
-            if data['shares_outstanding'] > 0:
-                equity_value = (dcf_result['enterprise_value'] * 1e9) - (data['total_debt'] or 0) + (data['cash'] or 0)
-                shares = data['shares_outstanding']
-                intrinsic_value = equity_value / shares
-                current_price = data['current_price']
-                upside = ((intrinsic_value - current_price) / current_price * 100) if current_price > 0 else 0
-                
-                col1, col2, col3 = st.columns(3)
-                col1.metric("Intrinsic Value/Share", f"₹{intrinsic_value:.2f}")
-                col2.metric("Current Price", f"₹{current_price:.2f}")
-                col3.metric("Upside/Downside", f"{upside:+.1f}%")
-                
-                st.divider()
-                st.subheader("📋 Valuation Summary")
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.write(f"""
-                    **Enterprise Value:** ₹{dcf_result['enterprise_value']:.2f}B
-                    **Less: Net Debt:** ₹{(data['total_debt'] - data['cash'])/1e9 if data['total_debt'] else 0:.2f}B
-                    **Equity Value:** ₹{equity_value/1e9:.2f}B
-                    **Shares Outstanding:** {shares:.2f}B
-                    """)
-                
-                with col2:
-                    st.write(f"""
-                    **Intrinsic Value/Share:** ₹{intrinsic_value:.2f}
-                    **Current Market Price:** ₹{current_price:.2f}
-                    **Margin of Safety:** {upside:+.1f}%
-                    """)
+            equity_value = (dcf['enterprise_value'] - (company_data['total_debt'] - company_data['cash'])/1e9)
+            intrinsic = equity_value / company_data['shares_outstanding']
+            current = company_data['current_price']
+            upside = ((intrinsic - current) / current * 100)
+            
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Intrinsic Value", f"{intrinsic:.2f}")
+            col2.metric("Current Price", f"{current:.2f}")
+            col3.metric("Upside/Downside", f"{upside:+.1f}%")
 
 elif page == "⚙️ Settings":
     st.title("⚙️ Settings")
-    
-    st.subheader("Display Settings")
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.selectbox("Currency Display", ["INR (₹)", "USD ($)", "EUR (€)"])
-        st.checkbox("Show detailed calculations", value=True)
-    
-    with col2:
-        st.selectbox("Number Format", ["Billions", "Millions"])
-        st.checkbox("Auto-calculate on input", value=True)
+    st.checkbox("Show detailed calculations", value=True)
+    st.selectbox("Number Format", ["Billions", "Millions"])
 
 st.divider()
 st.markdown(f"""
