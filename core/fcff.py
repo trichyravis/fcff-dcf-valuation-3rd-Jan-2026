@@ -1,146 +1,93 @@
 
-import pandas as pd
-from functools import reduce
+import streamlit as st
 
-def compute_fcff(xbrl, extract):
-    """
-    Computes FCFF using SEC XBRL with professional-grade robustness.
-    Returns: (fcff_dataframe, error_message or None)
-    """
+from core.sec_data import get_cik_from_ticker, get_company_xbrl, extract_series
+from core.fcff import compute_fcff
+from core.wacc import calculate_wacc
+from core.monte_carlo import monte_carlo_dcf
+from core.equity import get_share_count
+from core.net_debt import get_net_debt
 
-    # -------------------------------------------------
-    # TAG MAP WITH REAL-WORLD FALLBACKS
-    # -------------------------------------------------
-    tag_map = {
-        "EBIT": ["OperatingIncomeLoss"],
-        "PBT": [
-            "IncomeBeforeTax",
-            "IncomeLossFromContinuingOperationsBeforeIncomeTaxes"
-        ],
-        "NetIncome": [
-            "NetIncomeLoss",
-            "ProfitLoss"
-        ],
-        "Tax": ["IncomeTaxExpenseBenefit"],
-        "Dep": ["DepreciationAndAmortization"],
-        "CapEx": ["PaymentsToAcquirePropertyPlantAndEquipment"],
-        "ΔWC": ["IncreaseDecreaseInOperatingAssets"]
-    }
+# -------------------------------------------------
+# PAGE CONFIG
+# -------------------------------------------------
+st.set_page_config(
+    page_title="FCFF–DCF Valuation Platform",
+    layout="wide"
+)
 
-    dfs = {}
+st.title("📊 FCFF–DCF Valuation Platform (10-K Based)")
 
-    # -------------------------------------------------
-    # EXTRACT AVAILABLE SERIES
-    # -------------------------------------------------
-    for col, tags in tag_map.items():
-        df = extract(xbrl, tags, col)
-        if not df.empty:
-            dfs[col] = df
+# -------------------------------------------------
+# USER GUIDANCE
+# -------------------------------------------------
+st.info(
+    "ℹ️ **Important**: SEC 10-K filings provide only ONE clean FCFF year. "
+    "DCF valuation is forward-looking and relies on assumptions. "
+    "Banks and insurers are not suitable for FCFF valuation."
+)
 
-    # -------------------------------------------------
-    # RECONSTRUCT PBT IF MISSING
-    # -------------------------------------------------
-    if "PBT" not in dfs:
-        if "NetIncome" in dfs and "Tax" in dfs:
-            pbt = dfs["NetIncome"].merge(dfs["Tax"], on="Year", how="outer")
-            pbt["PBT"] = pbt["NetIncome"] + pbt["Tax"]
-            dfs["PBT"] = pbt[["Year", "PBT"]]
-        else:
-            return None, (
-                "Pre-tax income not available and cannot be reconstructed "
-                "(Net Income or Tax Expense missing)"
-            )
+# -------------------------------------------------
+# USER INPUT
+# -------------------------------------------------
+ticker = st.text_input("Enter US Ticker", "AAPL")
 
-    # -------------------------------------------------
-    # REQUIRED CORE INPUTS (ΔWC NOT REQUIRED HERE)
-    # -------------------------------------------------
-    required = ["EBIT", "PBT", "Tax", "Dep", "CapEx"]
-    for r in required:
-        if r not in dfs:
-            return None, f"Missing XBRL tag(s) required for FCFF: {r}"
+# -------------------------------------------------
+# MAIN ACTION
+# -------------------------------------------------
+if st.button("Run Valuation"):
 
-    # -------------------------------------------------
-    # ΔWC FALLBACK LOGIC
-    # -------------------------------------------------
-    if "ΔWC" not in dfs:
-        try:
-            ca = extract(xbrl, ["AssetsCurrent"], "CA")
-            cl = extract(xbrl, ["LiabilitiesCurrent"], "CL")
-            cash = extract(
-                xbrl,
-                ["CashAndCashEquivalentsAtCarryingValue"],
-                "Cash"
-            )
+    try:
+        cik = get_cik_from_ticker(ticker)
+        xbrl = get_company_xbrl(cik)
 
-            if not ca.empty and not cl.empty:
-                wc = ca.merge(cl, on="Year", how="outer")
+        # -----------------------------
+        # FCFF
+        # -----------------------------
+        fcff_df, error = compute_fcff(xbrl, extract_series)
 
-                if not cash.empty:
-                    wc = wc.merge(cash, on="Year", how="left")
-                    wc["Cash"] = wc["Cash"].fillna(0)
-                else:
-                    wc["Cash"] = 0
+        if error:
+            st.error(f"❌ FCFF computation failed: {error}")
+            st.stop()
 
-                wc["NWC"] = (wc["CA"] - wc["Cash"]) - wc["CL"]
-                wc["ΔWC"] = wc["NWC"].diff()
+        st.subheader("📘 FCFF (Latest 10-K Year)")
+        st.dataframe(fcff_df)
 
-                dfs["ΔWC"] = wc[["Year", "ΔWC"]].dropna()
-            else:
-                raise ValueError("Balance sheet WC unavailable")
-
-        except:
-            # Conservative, disclosed fallback
-            years = dfs["EBIT"]["Year"]
-            dfs["ΔWC"] = pd.DataFrame({
-                "Year": years,
-                "ΔWC": [0] * len(years)
-            })
-
-    # -------------------------------------------------
-    # ROBUST YEAR ALIGNMENT (OUTER JOIN + CLEANUP)
-    # -------------------------------------------------
-    df_list = [
-        dfs["EBIT"],
-        dfs["PBT"],
-        dfs["Tax"],
-        dfs["Dep"],
-        dfs["CapEx"],
-        dfs["ΔWC"]
-    ]
-
-    df_final = reduce(
-        lambda left, right: left.merge(right, on="Year", how="outer"),
-        df_list
-    )
-
-    df_final = df_final.sort_values("Year")
-
-    # Drop years missing critical inputs
-    df_final = df_final.dropna(
-        subset=["EBIT", "PBT", "Tax", "Dep", "CapEx"]
-    )
-
-    # Keep last 5 economically usable years
-    df_final = df_final.tail(5)
-
-    # Minimum data sufficiency check (PROFESSIONAL RULE)
-    if len(df_final) < 2:
-        return None, (
-            "Insufficient overlapping data to compute FCFF "
-            "(less than 2 usable years)"
+        st.warning(
+            "⚠️ FCFF is based on the latest 10-K year only. "
+            "This is correct and standard in professional valuation."
         )
 
-    # -------------------------------------------------
-    # FCFF COMPUTATION
-    # -------------------------------------------------
-    df_final["TaxRate"] = df_final["Tax"] / df_final["PBT"]
-    df_final["TaxRate"] = df_final["TaxRate"].clip(lower=0, upper=0.35)
+        # -----------------------------
+        # EQUITY & CAPITAL STRUCTURE
+        # -----------------------------
+        shares = get_share_count(xbrl)
+        net_debt = get_net_debt(xbrl, extract_series)
 
-    df_final["FCFF"] = (
-        df_final["EBIT"] * (1 - df_final["TaxRate"])
-        + df_final["Dep"]
-        - df_final["CapEx"]
-        - df_final["ΔWC"]
-    )
+        col1, col2 = st.columns(2)
 
-    return df_final.reset_index(drop=True), None
+        col1.metric("Diluted Shares Outstanding", f"{shares:,}")
+        col2.metric("Net Debt (Debt – Cash)", f"${net_debt:,.0f}")
+
+        # -----------------------------
+        # WACC
+        # -----------------------------
+        wacc_data = calculate_wacc(ticker)
+        st.metric("WACC (CAPM-Based)", f"{wacc_data['WACC']:.2%}")
+
+        # -----------------------------
+        # MONTE CARLO
+        # -----------------------------
+        fcff_last = fcff_df["FCFF"].iloc[0]
+
+        mc_values = monte_carlo_dcf(
+            fcff_last=fcff_last,
+            wacc_mean=wacc_data["WACC"],
+            g_mean=0.04
+        )
+
+        st.subheader("📈 Monte Carlo DCF – Terminal Value Distribution")
+        st.line_chart(mc_values[:500])
+
+    except Exception as e:
+        st.exception(e)
